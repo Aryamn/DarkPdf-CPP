@@ -37,6 +37,4 @@ Makefile
 Thumbs.db
 
 # Test files
-test_*.pdf
-*_output.pdf
-*_dark.pdf
+*.pdf

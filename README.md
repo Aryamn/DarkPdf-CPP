@@ -7,7 +7,7 @@ A C++ application that converts regular PDFs to dark mode by intelligently inver
 - Converts PDF pages to dark mode by inverting colors
 - Smart color inversion that preserves text contrast
 - Maintains PDF structure and quality
-- Cross-platform support (Windows, Linux, macOS)
+- Windows support with vcpkg package management
 
 ## Dependencies
 
@@ -24,20 +24,16 @@ cd vcpkg
 .\vcpkg install poppler:x64-windows cairo:x64-windows
 ```
 
-### Linux (Ubuntu/Debian)
-```bash
-sudo apt-get update
-sudo apt-get install libpoppler-cpp-dev libcairo2-dev cmake build-essential pkg-config
-```
-
-### macOS (using Homebrew)
-```bash
-brew install poppler cairo cmake pkg-config
-```
-
 ## Building
 
-### Windows with vcpkg
+### Using the provided batch script (recommended)
+
+```powershell
+.\run.bat
+```
+
+### Manual build
+
 ```powershell
 mkdir build
 cd build
@@ -45,23 +41,16 @@ cmake .. -DCMAKE_TOOLCHAIN_FILE=path/to/vcpkg/scripts/buildsystems/vcpkg.cmake
 cmake --build . --config Release
 ```
 
-### Linux/macOS
-```bash
-mkdir build
-cd build
-cmake ..
-make -j$(nproc)
-```
-
 ## Usage
 
-```bash
-./darkpdf input.pdf output.pdf
+```powershell
+.\darkpdf.exe input.pdf output.pdf
 ```
 
 ### Example
-```bash
-./darkpdf document.pdf document_dark.pdf
+
+```powershell
+.\darkpdf.exe document.pdf document_dark.pdf
 ```
 
 ## How It Works
@@ -84,7 +73,7 @@ The application uses a smart color inversion approach:
 
 ## Project Structure
 
-```
+```text
 DarkPdf/
 ├── src/
 │   ├── main.cpp           # Main application entry point

@@ -10,6 +10,28 @@
 #include <iostream>
 #include <vector>
 #include <cstring>
+#include <future>
+#include <thread>
+
+// Calculating Memory Usage
+#ifdef _WIN32
+#include <windows.h>
+#include <psapi.h>
+
+void printMemoryUsage(const std::string& checkpoint) {
+    PROCESS_MEMORY_COUNTERS_EX pmc;
+    GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc));
+    
+    SIZE_T virtualMemUsedByMe = pmc.PrivateUsage;
+    SIZE_T physMemUsedByMe = pmc.WorkingSetSize;
+    
+    std::cout << "[" << checkpoint << "] Memory Usage:" << std::endl;
+    std::cout << "  Physical Memory: " << (physMemUsedByMe / 1024 / 1024) << " MB" << std::endl;
+    std::cout << "  Virtual Memory: " << (virtualMemUsedByMe / 1024 / 1024) << " MB" << std::endl;
+    std::cout << "  Peak Working Set: " << (pmc.PeakWorkingSetSize / 1024 / 1024) << " MB" << std::endl;
+}
+#endif
+//
 
 PdfProcessor::PdfProcessor() : document_(nullptr), pageCount_(0) {
 }
@@ -23,7 +45,7 @@ bool PdfProcessor::loadPdf(const std::string& inputPath) {
     std::string absolutePathStr = absolutePath.string();
     
     if (!std::filesystem::exists(absolutePath)) {
-        std::cerr << "Error: File does not exist: " << absolutePathStr << std::endl;
+        std::cerr << "Error: File does not exist: " << absolutePathStr << "\n";
         return false;
     }
 
@@ -33,35 +55,35 @@ bool PdfProcessor::loadPdf(const std::string& inputPath) {
             poppler::document::load_from_file(pathRef.c_str())
         );
     } catch (const std::exception& e) {
-        std::cerr << "Error: Exception while loading PDF: " << e.what() << std::endl;
+        std::cerr << "Error: Exception while loading PDF: " << e.what() << "\n";
         return false;
     }
     
     if (!document_) {
-        std::cerr << "Error: Could not load PDF document" << std::endl;
+        std::cerr << "Error: Could not load PDF document" << "\n";
         return false;
     }
     
     if (document_->is_locked()) {
-        std::cerr << "Error: PDF is password protected" << std::endl;
+        std::cerr << "Error: PDF is password protected" << "\n";
         return false;
     }
     
     pageCount_ = document_->pages();
-    std::cout << "Loaded PDF with " << pageCount_ << " pages" << std::endl;
+    std::cout << "Loaded PDF with " << pageCount_ << " pages" << "\n";
     
     return true;
 }
 
 bool PdfProcessor::convertToDarkMode(const std::string& outputPath) {
     if (!document_) {
-        std::cerr << "Error: No PDF loaded" << std::endl;
+        std::cerr << "Error: No PDF loaded" << "\n";
         return false;
     }
     
     std::unique_ptr<poppler::page> firstPage(document_->create_page(0));
     if (!firstPage) {
-        std::cerr << "Error: Could not access first page" << std::endl;
+        std::cerr << "Error: Could not access first page" << "\n";
         return false;
     }
     
@@ -69,14 +91,14 @@ bool PdfProcessor::convertToDarkMode(const std::string& outputPath) {
     double pageWidth = pageRect.width();
     double pageHeight = pageRect.height();
     
-    std::cout << "Page dimensions: " << pageWidth << "x" << pageHeight << std::endl;
+    std::cout << "Page dimensions: " << pageWidth << "x" << pageHeight << "\n";
     
     cairo_surface_t* pdfSurface = cairo_pdf_surface_create(
         outputPath.c_str(), pageWidth, pageHeight
     );
     
     if (cairo_surface_status(pdfSurface) != CAIRO_STATUS_SUCCESS) {
-        std::cerr << "Error: Could not create output PDF surface" << std::endl;
+        std::cerr << "Error: Could not create output PDF surface" << "\n";
         cairo_surface_destroy(pdfSurface);
         return false;
     }
@@ -86,44 +108,62 @@ bool PdfProcessor::convertToDarkMode(const std::string& outputPath) {
     poppler::page_renderer renderer;
     renderer.set_render_hint(poppler::page_renderer::antialiasing, true);
     renderer.set_render_hint(poppler::page_renderer::text_antialiasing, true);
+    renderer.set_render_hint(poppler::page_renderer::text_hinting, true);
+
+    // Process all pages asynchronously
+    std::vector<std::future<cairo_surface_t*>> futures;
     
     for (int i = 0; i < pageCount_; ++i) {
-        std::cout << "Processing page " << (i + 1) << "/" << pageCount_ << std::endl;
-        
-        std::unique_ptr<poppler::page> page(document_->create_page(i));
-        if (!page) {
-            std::cerr << "Warning: Could not access page " << i << std::endl;
-            continue;
-        }
-        
-        cairo_surface_t* processedSurface = processPage(renderer, page.get(), i);
-        if (!processedSurface) {
-            std::cerr << "Warning: Failed to process page " << i << std::endl;
-            continue;
-        }
-                
-        cairo_save(pdfContext);
+        futures.push_back(std::async(std::launch::async, [this, i, &renderer]() {
+            std::unique_ptr<poppler::page> page(document_->create_page(i));
+            if (!page) {
+                throw std::runtime_error("Could not access page " + std::to_string(i));
+            }
+            return processPage(renderer,page.get(), i);
+        }));
+    }
+     
+    for (int i = 0; i < pageCount_; ++i) 
+    {        
+        try
+        {
+            cairo_save(pdfContext);
 
-        int surfaceWidth = cairo_image_surface_get_width(processedSurface);
-        int surfaceHeight = cairo_image_surface_get_height(processedSurface);
-        
-        double scaleX = pageWidth / surfaceWidth;
-        double scaleY = pageHeight / surfaceHeight;
-        cairo_scale(pdfContext, scaleX, scaleY);
-        
-        cairo_set_source_surface(pdfContext, processedSurface, 0, 0);
-        cairo_paint(pdfContext);
-        
-        cairo_restore(pdfContext);
-        cairo_surface_destroy(processedSurface);
-        cairo_show_page(pdfContext);
+            auto processedPage = futures[i].get();
+
+            int surfaceWidth = cairo_image_surface_get_width(processedPage);
+            int surfaceHeight = cairo_image_surface_get_height(processedPage);
+            
+            double scaleX = pageWidth / surfaceWidth;
+            double scaleY = pageHeight / surfaceHeight;
+            cairo_scale(pdfContext, scaleX, scaleY);
+            
+            cairo_set_source_surface(pdfContext, processedPage, 0, 0);
+            cairo_paint(pdfContext);
+            
+            cairo_restore(pdfContext);
+            cairo_surface_destroy(processedPage);
+            cairo_show_page(pdfContext);
+
+            if(i%10==0)
+            {
+                printMemoryUsage("After page " + std::to_string(i));
+            }
+
+            std::cout << "Processed page " << (i + 1) << "/" << pageCount_ << "\n";
+
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Error processing page " << i << ": " << e.what() << "\n";
+        }
     }
     
     // Cleanup
     cairo_destroy(pdfContext);
     cairo_surface_destroy(pdfSurface);
     
-    std::cout << "Conversion completed successfully!" << std::endl;
+    std::cout << "Conversion completed successfully!" << "\n";
     return true;
 }
 
@@ -136,7 +176,7 @@ cairo_surface_t* PdfProcessor::processPage(poppler::page_renderer& renderer, pop
     poppler::image pageImage = renderer.render_page(page, DEFAULT_DPI, DEFAULT_DPI); // 150 DPI
     
     if (!pageImage.is_valid()) {
-        std::cerr << "Warning: Could not render page " << pageIndex << std::endl;
+        std::cerr << "Warning: Could not render page " << pageIndex << "\n";
         return nullptr;
     }
     
@@ -149,19 +189,13 @@ cairo_surface_t* PdfProcessor::processPage(poppler::page_renderer& renderer, pop
     
     unsigned char* imageData = cairo_image_surface_get_data(imageSurface);
     const char* pageData = pageImage.const_data();
+    int srcStride = pageImage.bytes_per_row();
+    int dstStride = cairo_image_surface_get_stride(imageSurface);
     
     for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
-            if (pageImage.format() == poppler::image::format_argb32) {
-                int srcOffset = y * pageImage.bytes_per_row() + x * 4;
-                int dstOffset = (y * width + x) * 4;
-                
-                imageData[dstOffset + 0] = pageData[srcOffset + 0]; 
-                imageData[dstOffset + 1] = pageData[srcOffset + 1];
-                imageData[dstOffset + 2] = pageData[srcOffset + 2];
-                imageData[dstOffset + 3] = pageData[srcOffset + 3];
-            }
-        }
+        memcpy(imageData + y * dstStride, 
+               pageData + y * srcStride, 
+               width * 4);
     }
     
     cairo_surface_mark_dirty(imageSurface);

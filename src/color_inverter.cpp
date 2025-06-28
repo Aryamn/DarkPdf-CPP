@@ -2,6 +2,49 @@
 #include <algorithm>
 #include <cmath>
 
+// Color inversion constants
+namespace ColorConstants {
+    // Color detection thresholds
+    constexpr double SATURATION_THRESHOLD = 0.1;          // Threshold for detecting colored vs grayscale content
+    constexpr double LUMINANCE_THRESHOLD = 200.0;         // Threshold for detecting dark vs light content
+    
+    // Color adjustment factors
+    constexpr double BRIGHTNESS_BOOST_BASE = 0.7;         // Base brightness for colored text in dark mode
+    constexpr double BRIGHTNESS_BOOST_FACTOR = 0.3;       // Factor for original brightness contribution
+    constexpr double SATURATION_REDUCTION = 0.8;          // Factor to reduce saturation for colored text
+    
+    // RGB and color space constants
+    constexpr double RGB_LUMINANCE_R = 0.299;             // Red component weight for luminance calculation
+    constexpr double RGB_LUMINANCE_G = 0.587;             // Green component weight for luminance calculation
+    constexpr double RGB_LUMINANCE_B = 0.114;             // Blue component weight for luminance calculation
+    constexpr double RGB_SCALE = 255.0;                   // RGB scale factor
+    constexpr unsigned char RGB_MAX = 255;                // Maximum RGB value
+    
+    // HSV color space constants
+    constexpr double HUE_CIRCLE_DEGREES = 360.0;          // Degrees in a color circle
+    constexpr double HUE_SECTOR_SIZE = 60.0;              // Size of each hue sector in degrees
+    constexpr double HSV_LIGHTNESS_FACTOR = 2.0;          // Factor for HSV lightness calculation
+    constexpr double HSV_SATURATION_DIVISOR = 2.0;        // Divisor for HSV saturation adjustment
+    constexpr double HSV_HUE_MODULO = 2.0;                // Modulo factor for hue calculation
+    
+    // Pixel format constants
+    constexpr int PIXEL_STRIDE = 4;                       // Bytes per pixel in BGRA format
+    constexpr int ALPHA_CHANNEL_OFFSET = 3;               // Alpha channel position in BGRA
+    constexpr unsigned char TRANSPARENT_ALPHA = 0;        // Fully transparent alpha value
+    
+    // HSV hue range boundaries
+    constexpr double HUE_RANGE_1_MIN = 0.0;               // First hue range minimum
+    constexpr double HUE_RANGE_1_MAX = 60.0;              // First hue range maximum
+    constexpr double HUE_RANGE_2_MIN = 60.0;              // Second hue range minimum
+    constexpr double HUE_RANGE_2_MAX = 120.0;             // Second hue range maximum
+    constexpr double HUE_RANGE_3_MIN = 120.0;             // Third hue range minimum
+    constexpr double HUE_RANGE_3_MAX = 180.0;             // Third hue range maximum
+    constexpr double HUE_RANGE_4_MIN = 180.0;             // Fourth hue range minimum
+    constexpr double HUE_RANGE_4_MAX = 240.0;             // Fourth hue range maximum
+    constexpr double HUE_RANGE_5_MIN = 240.0;             // Fifth hue range minimum
+    constexpr double HUE_RANGE_5_MAX = 300.0;             // Fifth hue range maximum
+}
+
 void ColorInverter::invertColors(cairo_surface_t* surface) {
     if (!surface) return;
     
@@ -14,7 +57,7 @@ void ColorInverter::invertColors(cairo_surface_t* surface) {
     
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
-            unsigned char* pixel = data + y * stride + x * 4;
+            unsigned char* pixel = data + y * stride + x * ColorConstants::PIXEL_STRIDE;
             invertPixel(pixel);
         }
     }
@@ -27,44 +70,42 @@ void ColorInverter::invertPixel(unsigned char* pixel) {
     unsigned char b = pixel[0];
     unsigned char g = pixel[1];
     unsigned char r = pixel[2];
-    unsigned char a = pixel[3];
+    unsigned char a = pixel[ColorConstants::ALPHA_CHANNEL_OFFSET];
 
     // Skip transparent pixels
-    if (a == 0) return;
+    if (a == ColorConstants::TRANSPARENT_ALPHA) return;
 
     double luminance = getLuminance(r, g, b);
     double saturation = getSaturation(r, g, b);
 
-    if(saturation > 0.1f && luminance < 200) 
+    if(saturation > ColorConstants::SATURATION_THRESHOLD && luminance < ColorConstants::LUMINANCE_THRESHOLD) 
     {
         double h, s, v;
         rgbToHsv(r, g, b, h, s, v);
 
-        v = 0.7f + (v * 0.3f);  // Make colored text brighter
-        s = s * 0.8f;
+        v = ColorConstants::BRIGHTNESS_BOOST_BASE + (v * ColorConstants::BRIGHTNESS_BOOST_FACTOR);  // Make colored text brighter
+        s = s * ColorConstants::SATURATION_REDUCTION;
 
         unsigned char newR, newG, newB;
         hsvToRgb(h, s, v, newR, newG, newB);
 
-        pixel[0] = newB;  // B
-        pixel[1] = newG;  // G
-        pixel[2] = newR;  // R
+        pixel[0] = newB;
+        pixel[1] = newG;
+        pixel[2] = newR;
     }
     else
     {
-        // Low saturation (grayscale-ish) - full inversion
-        pixel[0] = 255 - b;  // B
-        pixel[1] = 255 - g;  // G
-        pixel[2] = 255 - r;  // R
+        pixel[0] = ColorConstants::RGB_MAX - b;
+        pixel[1] = ColorConstants::RGB_MAX - g;
+        pixel[2] = ColorConstants::RGB_MAX - r;
     }
     
-    // Alpha channel remains unchanged
     pixel[3] = a;
 }
 
 double ColorInverter::getLuminance(unsigned char r, unsigned char g, unsigned char b) {
     // Calculate perceived brightness using the standard formula
-    double brightness = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0;
+    double brightness = (ColorConstants::RGB_LUMINANCE_R * r + ColorConstants::RGB_LUMINANCE_G * g + ColorConstants::RGB_LUMINANCE_B * b) / ColorConstants::RGB_SCALE;
     return brightness;
 }
 
@@ -78,16 +119,16 @@ double ColorInverter::getSaturation(unsigned char r, unsigned char g, unsigned c
 
 void ColorInverter::rgbToHsv(unsigned char r, unsigned char g, unsigned char b, 
                             double& h, double& s, double& v) {
-    double rf = r / 255.0;
-    double gf = g / 255.0;
-    double bf = b / 255.0;
+    double rf = r / ColorConstants::RGB_SCALE;
+    double gf = g / ColorConstants::RGB_SCALE;
+    double bf = b / ColorConstants::RGB_SCALE;
     
     double maxVal = std::max({rf, gf, bf});
     double minVal = std::min({rf, gf, bf});
     double delta = maxVal - minVal;
     
     // Value (brightness)
-    v = (maxVal + minVal)/2.0;
+    v = (maxVal + minVal) / ColorConstants::HSV_LIGHTNESS_FACTOR;
     
     // Saturation
     if (maxVal == 0) {
@@ -100,40 +141,40 @@ void ColorInverter::rgbToHsv(unsigned char r, unsigned char g, unsigned char b,
     if (delta == 0) {
         h = 0;
     } else if (maxVal == rf) {
-        h = 60 * (((gf - bf) / delta) + (gf < bf ? 6 : 0));
+        h = ColorConstants::HUE_SECTOR_SIZE * (((gf - bf) / delta) + (gf < bf ? 6 : 0));
     } else if (maxVal == gf) {
-        h = 60 * (((bf - rf) / delta) + 2);
+        h = ColorConstants::HUE_SECTOR_SIZE * (((bf - rf) / delta) + 2);
     } else {
-        h = 60 * (((rf - gf) / delta) + 4);
+        h = ColorConstants::HUE_SECTOR_SIZE * (((rf - gf) / delta) + 4);
     }
     
-    if (h < 0) h += 360;
-    if (h >= 360) h -= 360;
+    if (h < 0) h += ColorConstants::HUE_CIRCLE_DEGREES;
+    if (h >= ColorConstants::HUE_CIRCLE_DEGREES) h -= ColorConstants::HUE_CIRCLE_DEGREES;
 }
 
 void ColorInverter::hsvToRgb(double h, double s, double v, 
                             unsigned char& r, unsigned char& g, unsigned char& b) {
     double c = v * s;
-    double x = c * (1 - std::abs(std::fmod(h / 60.0, 2) - 1));
-    double m = v - c / 2;
+    double x = c * (1 - std::abs(std::fmod(h / ColorConstants::HUE_SECTOR_SIZE, ColorConstants::HSV_HUE_MODULO) - 1));
+    double m = v - c / ColorConstants::HSV_SATURATION_DIVISOR;
     
     double rf, gf, bf;
     
-    if (h >= 0 && h < 60) {
+    if (h >= ColorConstants::HUE_RANGE_1_MIN && h < ColorConstants::HUE_RANGE_1_MAX) {
         rf = c; gf = x; bf = 0;
-    } else if (h >= 60 && h < 120) {
+    } else if (h >= ColorConstants::HUE_RANGE_2_MIN && h < ColorConstants::HUE_RANGE_2_MAX) {
         rf = x; gf = c; bf = 0;
-    } else if (h >= 120 && h < 180) {
+    } else if (h >= ColorConstants::HUE_RANGE_3_MIN && h < ColorConstants::HUE_RANGE_3_MAX) {
         rf = 0; gf = c; bf = x;
-    } else if (h >= 180 && h < 240) {
+    } else if (h >= ColorConstants::HUE_RANGE_4_MIN && h < ColorConstants::HUE_RANGE_4_MAX) {
         rf = 0; gf = x; bf = c;
-    } else if (h >= 240 && h < 300) {
+    } else if (h >= ColorConstants::HUE_RANGE_5_MIN && h < ColorConstants::HUE_RANGE_5_MAX) {
         rf = x; gf = 0; bf = c;
     } else {
         rf = c; gf = 0; bf = x;
     }
     
-    r = static_cast<unsigned char>((rf + m) * 255);
-    g = static_cast<unsigned char>((gf + m) * 255);
-    b = static_cast<unsigned char>((bf + m) * 255);
+    r = static_cast<unsigned char>((rf + m) * ColorConstants::RGB_MAX);
+    g = static_cast<unsigned char>((gf + m) * ColorConstants::RGB_MAX);
+    b = static_cast<unsigned char>((bf + m) * ColorConstants::RGB_MAX);
 }
