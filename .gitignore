@@ -38,3 +38,6 @@ Thumbs.db
 
 # Test files
 *.pdf
+
+# Md file
+DESIGN_COLOR_SCHEMES.md

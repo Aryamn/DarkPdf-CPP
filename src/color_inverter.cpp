@@ -43,9 +43,13 @@ namespace ColorConstants {
     constexpr double HUE_RANGE_4_MAX = 240.0;             // Fourth hue range maximum
     constexpr double HUE_RANGE_5_MIN = 240.0;             // Fifth hue range minimum
     constexpr double HUE_RANGE_5_MAX = 300.0;             // Fifth hue range maximum
+
+    // Color scheme mapping thresholds
+    constexpr double LIGHT_THRESHOLD = 0.7;               // Threshold for light colors (map to background)
+    constexpr double DARK_THRESHOLD = 0.3;                // Threshold for dark colors (map to text)
 }
 
-void ColorInverter::invertColors(cairo_surface_t* surface) {
+void ColorInverter::invertColors(cairo_surface_t* surface, const ColorScheme& scheme) {
     if (!surface) return;
     
     cairo_surface_flush(surface);
@@ -58,53 +62,33 @@ void ColorInverter::invertColors(cairo_surface_t* surface) {
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
             unsigned char* pixel = data + y * stride + x * ColorConstants::PIXEL_STRIDE;
-            invertPixel(pixel);
+            invertPixel(pixel, scheme);
         }
     }
     
     cairo_surface_mark_dirty(surface);
 }
 
-void ColorInverter::invertPixel(unsigned char* pixel) {
-    // Cairo uses BGRA format
+void ColorInverter::invertPixel(unsigned char* pixel, const ColorScheme& scheme) {
+
     unsigned char b = pixel[0];
     unsigned char g = pixel[1];
     unsigned char r = pixel[2];
     unsigned char a = pixel[ColorConstants::ALPHA_CHANNEL_OFFSET];
 
-    // Skip transparent pixels
     if (a == ColorConstants::TRANSPARENT_ALPHA) return;
 
-    double luminance = getLuminance(r, g, b);
-    double saturation = getSaturation(r, g, b);
-
-    if(saturation > ColorConstants::SATURATION_THRESHOLD && luminance < ColorConstants::LUMINANCE_THRESHOLD) 
-    {
-        double h, s, v;
-        rgbToHsv(r, g, b, h, s, v);
-
-        v = ColorConstants::BRIGHTNESS_BOOST_BASE + (v * ColorConstants::BRIGHTNESS_BOOST_FACTOR);  // Make colored text brighter
-        s = s * ColorConstants::SATURATION_REDUCTION;
-
-        unsigned char newR, newG, newB;
-        hsvToRgb(h, s, v, newR, newG, newB);
-
-        pixel[0] = newB;
-        pixel[1] = newG;
-        pixel[2] = newR;
-    }
-    else
-    {
-        pixel[0] = ColorConstants::RGB_MAX - b;
-        pixel[1] = ColorConstants::RGB_MAX - g;
-        pixel[2] = ColorConstants::RGB_MAX - r;
-    }
+    RGB originalColor(r, g, b);
     
-    pixel[3] = a;
+    RGB mappedColor = mapToScheme(originalColor, scheme);
+    
+    pixel[0] = mappedColor.b;  // Blue
+    pixel[1] = mappedColor.g;  // Green
+    pixel[2] = mappedColor.r;  // Red
+    pixel[3] = a;              // Alpha
 }
 
 double ColorInverter::getLuminance(unsigned char r, unsigned char g, unsigned char b) {
-    // Calculate perceived brightness using the standard formula
     double brightness = (ColorConstants::RGB_LUMINANCE_R * r + ColorConstants::RGB_LUMINANCE_G * g + ColorConstants::RGB_LUMINANCE_B * b) / ColorConstants::RGB_SCALE;
     return brightness;
 }
@@ -127,7 +111,7 @@ void ColorInverter::rgbToHsv(unsigned char r, unsigned char g, unsigned char b,
     double minVal = std::min({rf, gf, bf});
     double delta = maxVal - minVal;
     
-    // Value (brightness)
+    // lightness (brightness)
     v = (maxVal + minVal) / ColorConstants::HSV_LIGHTNESS_FACTOR;
     
     // Saturation
@@ -177,4 +161,69 @@ void ColorInverter::hsvToRgb(double h, double s, double v,
     r = static_cast<unsigned char>((rf + m) * ColorConstants::RGB_MAX);
     g = static_cast<unsigned char>((gf + m) * ColorConstants::RGB_MAX);
     b = static_cast<unsigned char>((bf + m) * ColorConstants::RGB_MAX);
+}
+
+RGB ColorInverter::mapToScheme(const RGB& original, const ColorScheme& scheme) {
+    double luminosity = calculateLuminosity(original);
+    double saturation = getSaturation(original.r, original.g, original.b);
+    
+    // Check if it's a colored element (high saturation)
+    if (saturation > ColorConstants::SATURATION_THRESHOLD) {
+        // For colored elements, preserve hue but adapt to scheme luminosity range
+        double h, s, v;
+        rgbToHsv(original.r, original.g, original.b, h, s, v);
+        
+        // Map luminosity to scheme range
+        double targetLuminosity;
+        if (luminosity > ColorConstants::LIGHT_THRESHOLD) {
+            // Light colored element -> map closer to background
+            targetLuminosity = calculateLuminosity(scheme.backgroundColor) + 0.2;
+        } else if (luminosity < ColorConstants::DARK_THRESHOLD) {
+            // Dark colored element -> map closer to text
+            targetLuminosity = calculateLuminosity(scheme.textColor) - 0.2;
+        } else {
+            // Mid-tone colored element -> interpolate
+            double factor = (luminosity - ColorConstants::DARK_THRESHOLD) / 
+                          (ColorConstants::LIGHT_THRESHOLD - ColorConstants::DARK_THRESHOLD);
+            RGB bgColor = scheme.backgroundColor;
+            RGB textColor = scheme.textColor;
+            return interpolateColors(textColor, bgColor, factor);
+        }
+        
+        targetLuminosity = std::max(0.0, std::min(1.0, targetLuminosity));
+        
+        unsigned char newR, newG, newB;
+        hsvToRgb(h, s * ColorConstants::SATURATION_REDUCTION, targetLuminosity, newR, newG, newB);
+        return RGB(newR, newG, newB);
+    } else {
+        // For grayscale elements, use luminosity-based mapping
+        if (luminosity > ColorConstants::LIGHT_THRESHOLD) {
+            // Light background colors -> scheme background
+            return scheme.backgroundColor;
+        } else if (luminosity < ColorConstants::DARK_THRESHOLD) {
+            // Dark text colors -> scheme text color
+            return scheme.textColor;
+        } else {
+            // Mid-tones -> interpolate between background and text
+            double factor = (luminosity - ColorConstants::DARK_THRESHOLD) / 
+                          (ColorConstants::LIGHT_THRESHOLD - ColorConstants::DARK_THRESHOLD);
+            return interpolateColors(scheme.textColor, scheme.backgroundColor, factor);
+        }
+    }
+}
+
+double ColorInverter::calculateLuminosity(const RGB& color) {
+    return (ColorConstants::RGB_LUMINANCE_R * color.r + 
+            ColorConstants::RGB_LUMINANCE_G * color.g + 
+            ColorConstants::RGB_LUMINANCE_B * color.b) / ColorConstants::RGB_SCALE;
+}
+
+RGB ColorInverter::interpolateColors(const RGB& color1, const RGB& color2, double factor) {
+    factor = std::max(0.0, std::min(1.0, factor));
+    
+    unsigned char r = static_cast<unsigned char>(color1.r + factor * (color2.r - color1.r));
+    unsigned char g = static_cast<unsigned char>(color1.g + factor * (color2.g - color1.g));
+    unsigned char b = static_cast<unsigned char>(color1.b + factor * (color2.b - color1.b));
+    
+    return RGB(r, g, b);
 }
