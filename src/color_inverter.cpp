@@ -111,8 +111,8 @@ void ColorInverter::rgbToHsv(unsigned char r, unsigned char g, unsigned char b,
     double minVal = std::min({rf, gf, bf});
     double delta = maxVal - minVal;
     
-    // lightness (brightness)
-    v = (maxVal + minVal) / ColorConstants::HSV_LIGHTNESS_FACTOR;
+    // Value (brightness) - correct HSV formula
+    v = maxVal;
     
     // Saturation
     if (maxVal == 0) {
@@ -139,8 +139,8 @@ void ColorInverter::rgbToHsv(unsigned char r, unsigned char g, unsigned char b,
 void ColorInverter::hsvToRgb(double h, double s, double v, 
                             unsigned char& r, unsigned char& g, unsigned char& b) {
     double c = v * s;
-    double x = c * (1 - std::abs(std::fmod(h / ColorConstants::HUE_SECTOR_SIZE, ColorConstants::HSV_HUE_MODULO) - 1));
-    double m = v - c / ColorConstants::HSV_SATURATION_DIVISOR;
+    double x = c * (1 - std::abs(std::fmod(h / ColorConstants::HUE_SECTOR_SIZE, 2.0) - 1));
+    double m = v - c;
     
     double rf, gf, bf;
     
@@ -169,32 +169,44 @@ RGB ColorInverter::mapToScheme(const RGB& original, const ColorScheme& scheme) {
     
     // Check if it's a colored element (high saturation)
     if (saturation > ColorConstants::SATURATION_THRESHOLD) {
-        // For colored elements, preserve hue but adapt to scheme luminosity range
+        // For colored elements, preserve hue but adapt brightness for dark mode
         double h, s, v;
-        rgbToHsv(original.r, original.g, original.b, h, s, v);
-        
-        // Map luminosity to scheme range
-        double targetLuminosity;
-        if (luminosity > ColorConstants::LIGHT_THRESHOLD) {
-            // Light colored element -> map closer to background
-            targetLuminosity = calculateLuminosity(scheme.backgroundColor) + 0.2;
-        } else if (luminosity < ColorConstants::DARK_THRESHOLD) {
-            // Dark colored element -> map closer to text
-            targetLuminosity = calculateLuminosity(scheme.textColor) - 0.2;
+
+        if(rgbToHsvCache.find(original)== rgbToHsvCache.end()) {
+            rgbToHsv(original.r, original.g, original.b, h, s, v);
+            rgbToHsvCache[original] = std::make_tuple(h, s, v);
         } else {
-            // Mid-tone colored element -> interpolate
-            double factor = (luminosity - ColorConstants::DARK_THRESHOLD) / 
-                          (ColorConstants::LIGHT_THRESHOLD - ColorConstants::DARK_THRESHOLD);
-            RGB bgColor = scheme.backgroundColor;
-            RGB textColor = scheme.textColor;
-            return interpolateColors(textColor, bgColor, factor);
+            std::tie(h, s, v) = rgbToHsvCache[original];
+        }
+ 
+        // Map HSV value (brightness) to appropriate dark mode range
+        double targetV;
+        if (v > ColorConstants::LIGHT_THRESHOLD) {
+            // Bright colored element -> make moderately bright for dark mode
+            targetV = 0.5 + (v - ColorConstants::LIGHT_THRESHOLD) * 0.3;
+        } else if (v < ColorConstants::DARK_THRESHOLD) {
+            // Dark colored element -> make brighter for visibility
+            targetV = 0.4 + v * 0.5;
+        } else {
+            // Mid-tone colored element -> adjust moderately
+            targetV = 0.3 + v * 0.4;
         }
         
-        targetLuminosity = std::max(0.0, std::min(1.0, targetLuminosity));
+        targetV = std::max(0.2, std::min(0.8, targetV));
+        
+        // Reduce saturation slightly for better readability in dark mode
+        double targetS = s * ColorConstants::SATURATION_REDUCTION;
         
         unsigned char newR, newG, newB;
-        hsvToRgb(h, s * ColorConstants::SATURATION_REDUCTION, targetLuminosity, newR, newG, newB);
-        return RGB(newR, newG, newB);
+        std::tuple<double,double,double>hsvTuple{h, targetS, targetV};
+
+        if(hsvToRgbCache.find(hsvTuple) == hsvToRgbCache.end()) {
+            hsvToRgb(h, targetS, targetV, newR, newG, newB);
+            hsvToRgbCache[hsvTuple] = RGB(newR, newG, newB);
+            
+        }
+
+       return hsvToRgbCache[hsvTuple];
     } else {
         // For grayscale elements, use luminosity-based mapping
         if (luminosity > ColorConstants::LIGHT_THRESHOLD) {

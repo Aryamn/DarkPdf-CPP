@@ -13,6 +13,12 @@ struct RGB {
     bool operator==(const RGB& other) const {
         return r == other.r && g == other.g && b == other.b;
     }
+    
+    bool operator<(const RGB& other) const {
+        if (r != other.r) return r < other.r;
+        if (g != other.g) return g < other.g;
+        return b < other.b;
+    }
 };
 
 struct ColorScheme {
@@ -40,7 +46,7 @@ public:
     
 private:
     static std::vector<ColorScheme> initializeSchemes();
-    static std::vector<ColorScheme> schemes;
-    static bool initialized;
+    static inline std::vector<ColorScheme> schemes;
+    static inline bool initialized;
     static void ensureInitialized();
 };

@@ -2,10 +2,6 @@
 #include <iostream>
 #include <algorithm>
 
-// Static member initialization
-std::vector<ColorScheme> ColorSchemeManager::schemes;
-bool ColorSchemeManager::initialized = false;
-
 void ColorSchemeManager::ensureInitialized() {
     if (!initialized) {
         schemes = initializeSchemes();

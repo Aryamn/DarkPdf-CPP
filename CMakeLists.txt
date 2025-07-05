@@ -4,8 +4,15 @@ project(DarkPdf)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Enable testing
+enable_testing()
+
 # Find CLI11 using vcpkg
 find_package(CLI11 CONFIG REQUIRED)
+
+# Find Google Test
+find_package(GTest CONFIG REQUIRED)
+
 
 # Simple vcpkg paths for manual libraries
 set(VCPKG_ROOT "C:/Users/aryamanjain/vcpkg")
@@ -60,3 +67,32 @@ target_link_libraries(darkpdf PRIVATE
 
 
 message(STATUS "Build configured for ${CMAKE_BUILD_TYPE}")
+
+# Create a library for testable components
+add_library(darkpdf_lib STATIC
+    src/color_scheme.cpp
+    src/color_inverter.cpp
+    src/pdf_processor.cpp
+)
+
+target_include_directories(darkpdf_lib PUBLIC 
+    src
+    ${POPPLER_INCLUDE_DIR}
+    ${CAIRO_INCLUDE_DIR}
+)
+
+target_link_libraries(darkpdf_lib PUBLIC
+    ${POPPLER_CPP_LIBRARY}
+    ${POPPLER_LIBRARY}
+    ${CAIRO_LIBRARY}
+    CLI11::CLI11
+    user32
+    gdi32
+    msimg32
+)
+
+# Update main executable to use the library
+target_link_libraries(darkpdf PRIVATE darkpdf_lib)
+
+# Add tests
+add_subdirectory(tests)

@@ -72,6 +72,10 @@ bool PdfProcessor::loadPdf(const std::string& inputPath) {
     pageCount_ = document_->pages();
     std::cout << "Loaded PDF with " << pageCount_ << " pages" << "\n";
     
+    // Display the DPI that will be used
+    int dpi = calculateOptimalDPI();
+    std::cout << "Using DPI: " << dpi << " (threshold: " << PAGE_THRESHOLD << " pages)" << "\n";
+    
     return true;
 }
 
@@ -165,12 +169,21 @@ bool PdfProcessor::convertToDarkMode(const std::string& outputPath, const ColorS
     return true;
 }
 
+int PdfProcessor::calculateOptimalDPI() const {
+    if (pageCount_ > PAGE_THRESHOLD) {
+        return LOW_DPI;   // Use 90 DPI for large PDFs
+    } else {
+        return HIGH_DPI;  // Use 130 DPI for smaller PDFs
+    }
+}
+
 cairo_surface_t* PdfProcessor::processPage(poppler::page_renderer& renderer, poppler::page* page, int pageIndex, const ColorScheme& scheme) {
     if (!page) {
         return nullptr;
     }
     
-    poppler::image pageImage = renderer.render_page(page, DEFAULT_DPI, DEFAULT_DPI); // 150 DPI
+    int dpi = calculateOptimalDPI();
+    poppler::image pageImage = renderer.render_page(page, dpi, dpi);
     
     if (!pageImage.is_valid()) {
         std::cerr << "Warning: Could not render page " << pageIndex << "\n";
