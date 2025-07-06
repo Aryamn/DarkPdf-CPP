@@ -6,11 +6,8 @@
 namespace ColorConstants {
     // Color detection thresholds
     constexpr double SATURATION_THRESHOLD = 0.1;          // Threshold for detecting colored vs grayscale content
-    constexpr double LUMINANCE_THRESHOLD = 200.0;         // Threshold for detecting dark vs light content
     
     // Color adjustment factors
-    constexpr double BRIGHTNESS_BOOST_BASE = 0.7;         // Base brightness for colored text in dark mode
-    constexpr double BRIGHTNESS_BOOST_FACTOR = 0.3;       // Factor for original brightness contribution
     constexpr double SATURATION_REDUCTION = 0.8;          // Factor to reduce saturation for colored text
     
     // RGB and color space constants
@@ -23,9 +20,6 @@ namespace ColorConstants {
     // HSV color space constants
     constexpr double HUE_CIRCLE_DEGREES = 360.0;          // Degrees in a color circle
     constexpr double HUE_SECTOR_SIZE = 60.0;              // Size of each hue sector in degrees
-    constexpr double HSV_LIGHTNESS_FACTOR = 2.0;          // Factor for HSV lightness calculation
-    constexpr double HSV_SATURATION_DIVISOR = 2.0;        // Divisor for HSV saturation adjustment
-    constexpr double HSV_HUE_MODULO = 2.0;                // Modulo factor for hue calculation
     
     // Pixel format constants
     constexpr int PIXEL_STRIDE = 4;                       // Bytes per pixel in BGRA format
@@ -47,6 +41,16 @@ namespace ColorConstants {
     // Color scheme mapping thresholds
     constexpr double LIGHT_THRESHOLD = 0.7;               // Threshold for light colors (map to background)
     constexpr double DARK_THRESHOLD = 0.3;                // Threshold for dark colors (map to text)
+    
+    // HSV value mapping constants for colored elements in dark mode
+    constexpr double BRIGHT_ELEMENT_BASE_VALUE = 0.5;     // Base brightness for bright colored elements
+    constexpr double BRIGHT_ELEMENT_SCALE_FACTOR = 0.3;   // Scale factor for brightness adjustment above light threshold
+    constexpr double DARK_ELEMENT_BASE_VALUE = 0.4;       // Base brightness for dark colored elements
+    constexpr double DARK_ELEMENT_SCALE_FACTOR = 0.5;     // Scale factor for dark element brightness boost
+    constexpr double MID_ELEMENT_BASE_VALUE = 0.3;        // Base brightness for mid-tone colored elements
+    constexpr double MID_ELEMENT_SCALE_FACTOR = 0.4;      // Scale factor for mid-tone element brightness
+    constexpr double MIN_COLORED_BRIGHTNESS = 0.2;        // Minimum brightness for colored elements (readability)
+    constexpr double MAX_COLORED_BRIGHTNESS = 0.8;        // Maximum brightness for colored elements (eye comfort)
 }
 
 void ColorInverter::invertColors(cairo_surface_t* surface, const ColorScheme& scheme) {
@@ -183,16 +187,21 @@ RGB ColorInverter::mapToScheme(const RGB& original, const ColorScheme& scheme) {
         double targetV;
         if (v > ColorConstants::LIGHT_THRESHOLD) {
             // Bright colored element -> make moderately bright for dark mode
-            targetV = 0.5 + (v - ColorConstants::LIGHT_THRESHOLD) * 0.3;
+            targetV = ColorConstants::BRIGHT_ELEMENT_BASE_VALUE + 
+                     (v - ColorConstants::LIGHT_THRESHOLD) * ColorConstants::BRIGHT_ELEMENT_SCALE_FACTOR;
         } else if (v < ColorConstants::DARK_THRESHOLD) {
             // Dark colored element -> make brighter for visibility
-            targetV = 0.4 + v * 0.5;
+            targetV = ColorConstants::DARK_ELEMENT_BASE_VALUE + 
+                     v * ColorConstants::DARK_ELEMENT_SCALE_FACTOR;
         } else {
             // Mid-tone colored element -> adjust moderately
-            targetV = 0.3 + v * 0.4;
+            targetV = ColorConstants::MID_ELEMENT_BASE_VALUE + 
+                     v * ColorConstants::MID_ELEMENT_SCALE_FACTOR;
         }
         
-        targetV = std::max(0.2, std::min(0.8, targetV));
+        // Clamp brightness to readable range for dark mode
+        targetV = std::max(ColorConstants::MIN_COLORED_BRIGHTNESS, 
+                          std::min(ColorConstants::MAX_COLORED_BRIGHTNESS, targetV));
         
         // Reduce saturation slightly for better readability in dark mode
         double targetS = s * ColorConstants::SATURATION_REDUCTION;

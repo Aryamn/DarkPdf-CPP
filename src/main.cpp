@@ -49,11 +49,6 @@ int main(int argc, char* argv[]) {
               "  darkpdf.exe input.pdf output.pdf -s blue-filter\n"
               "  darkpdf.exe --list-schemes");
     
-    if (argc >= 2 && std::string(argv[1]) == "--list-schemes") {
-        ColorSchemeManager::printAvailableSchemes();
-        return 0;
-    }
-    
     try {
         app.parse(argc, argv);
     } catch (const CLI::ParseError& e) {
