@@ -14,9 +14,23 @@ cmake --build .
 if exist Debug\darkpdf.exe (
     echo Success! Executable: build\Debug\darkpdf.exe
     echo Usage: build\Debug\darkpdf.exe input.pdf output.pdf
+    
+    :: Run tests if they exist
+    if exist tests\Debug\darkpdf_tests.exe (
+        echo.
+        echo Running unit tests...
+        tests\Debug\darkpdf_tests.exe
+    )
 ) else if exist Release\darkpdf.exe (
     echo Success! Executable: build\Release\darkpdf.exe  
     echo Usage: build\Release\darkpdf.exe input.pdf output.pdf
+    
+    :: Run tests if they exist
+    if exist tests\Release\darkpdf_tests.exe (
+        echo.
+        echo Running unit tests...
+        tests\Release\darkpdf_tests.exe
+    )
 ) else (
     echo Build failed!
 )

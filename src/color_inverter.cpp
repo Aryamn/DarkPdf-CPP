@@ -6,11 +6,8 @@
 namespace ColorConstants {
     // Color detection thresholds
     constexpr double SATURATION_THRESHOLD = 0.1;          // Threshold for detecting colored vs grayscale content
-    constexpr double LUMINANCE_THRESHOLD = 200.0;         // Threshold for detecting dark vs light content
     
     // Color adjustment factors
-    constexpr double BRIGHTNESS_BOOST_BASE = 0.7;         // Base brightness for colored text in dark mode
-    constexpr double BRIGHTNESS_BOOST_FACTOR = 0.3;       // Factor for original brightness contribution
     constexpr double SATURATION_REDUCTION = 0.8;          // Factor to reduce saturation for colored text
     
     // RGB and color space constants
@@ -23,9 +20,6 @@ namespace ColorConstants {
     // HSV color space constants
     constexpr double HUE_CIRCLE_DEGREES = 360.0;          // Degrees in a color circle
     constexpr double HUE_SECTOR_SIZE = 60.0;              // Size of each hue sector in degrees
-    constexpr double HSV_LIGHTNESS_FACTOR = 2.0;          // Factor for HSV lightness calculation
-    constexpr double HSV_SATURATION_DIVISOR = 2.0;        // Divisor for HSV saturation adjustment
-    constexpr double HSV_HUE_MODULO = 2.0;                // Modulo factor for hue calculation
     
     // Pixel format constants
     constexpr int PIXEL_STRIDE = 4;                       // Bytes per pixel in BGRA format
@@ -43,9 +37,23 @@ namespace ColorConstants {
     constexpr double HUE_RANGE_4_MAX = 240.0;             // Fourth hue range maximum
     constexpr double HUE_RANGE_5_MIN = 240.0;             // Fifth hue range minimum
     constexpr double HUE_RANGE_5_MAX = 300.0;             // Fifth hue range maximum
+
+    // Color scheme mapping thresholds
+    constexpr double LIGHT_THRESHOLD = 0.7;               // Threshold for light colors (map to background)
+    constexpr double DARK_THRESHOLD = 0.3;                // Threshold for dark colors (map to text)
+    
+    // HSV value mapping constants for colored elements in dark mode
+    constexpr double BRIGHT_ELEMENT_BASE_VALUE = 0.5;     // Base brightness for bright colored elements
+    constexpr double BRIGHT_ELEMENT_SCALE_FACTOR = 0.3;   // Scale factor for brightness adjustment above light threshold
+    constexpr double DARK_ELEMENT_BASE_VALUE = 0.4;       // Base brightness for dark colored elements
+    constexpr double DARK_ELEMENT_SCALE_FACTOR = 0.5;     // Scale factor for dark element brightness boost
+    constexpr double MID_ELEMENT_BASE_VALUE = 0.3;        // Base brightness for mid-tone colored elements
+    constexpr double MID_ELEMENT_SCALE_FACTOR = 0.4;      // Scale factor for mid-tone element brightness
+    constexpr double MIN_COLORED_BRIGHTNESS = 0.2;        // Minimum brightness for colored elements (readability)
+    constexpr double MAX_COLORED_BRIGHTNESS = 0.8;        // Maximum brightness for colored elements (eye comfort)
 }
 
-void ColorInverter::invertColors(cairo_surface_t* surface) {
+void ColorInverter::invertColors(cairo_surface_t* surface, const ColorScheme& scheme) {
     if (!surface) return;
     
     cairo_surface_flush(surface);
@@ -58,53 +66,33 @@ void ColorInverter::invertColors(cairo_surface_t* surface) {
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
             unsigned char* pixel = data + y * stride + x * ColorConstants::PIXEL_STRIDE;
-            invertPixel(pixel);
+            invertPixel(pixel, scheme);
         }
     }
     
     cairo_surface_mark_dirty(surface);
 }
 
-void ColorInverter::invertPixel(unsigned char* pixel) {
-    // Cairo uses BGRA format
+void ColorInverter::invertPixel(unsigned char* pixel, const ColorScheme& scheme) {
+
     unsigned char b = pixel[0];
     unsigned char g = pixel[1];
     unsigned char r = pixel[2];
     unsigned char a = pixel[ColorConstants::ALPHA_CHANNEL_OFFSET];
 
-    // Skip transparent pixels
     if (a == ColorConstants::TRANSPARENT_ALPHA) return;
 
-    double luminance = getLuminance(r, g, b);
-    double saturation = getSaturation(r, g, b);
-
-    if(saturation > ColorConstants::SATURATION_THRESHOLD && luminance < ColorConstants::LUMINANCE_THRESHOLD) 
-    {
-        double h, s, v;
-        rgbToHsv(r, g, b, h, s, v);
-
-        v = ColorConstants::BRIGHTNESS_BOOST_BASE + (v * ColorConstants::BRIGHTNESS_BOOST_FACTOR);  // Make colored text brighter
-        s = s * ColorConstants::SATURATION_REDUCTION;
-
-        unsigned char newR, newG, newB;
-        hsvToRgb(h, s, v, newR, newG, newB);
-
-        pixel[0] = newB;
-        pixel[1] = newG;
-        pixel[2] = newR;
-    }
-    else
-    {
-        pixel[0] = ColorConstants::RGB_MAX - b;
-        pixel[1] = ColorConstants::RGB_MAX - g;
-        pixel[2] = ColorConstants::RGB_MAX - r;
-    }
+    RGB originalColor(r, g, b);
     
-    pixel[3] = a;
+    RGB mappedColor = mapToScheme(originalColor, scheme);
+    
+    pixel[0] = mappedColor.b;  // Blue
+    pixel[1] = mappedColor.g;  // Green
+    pixel[2] = mappedColor.r;  // Red
+    pixel[3] = a;              // Alpha
 }
 
 double ColorInverter::getLuminance(unsigned char r, unsigned char g, unsigned char b) {
-    // Calculate perceived brightness using the standard formula
     double brightness = (ColorConstants::RGB_LUMINANCE_R * r + ColorConstants::RGB_LUMINANCE_G * g + ColorConstants::RGB_LUMINANCE_B * b) / ColorConstants::RGB_SCALE;
     return brightness;
 }
@@ -127,8 +115,8 @@ void ColorInverter::rgbToHsv(unsigned char r, unsigned char g, unsigned char b,
     double minVal = std::min({rf, gf, bf});
     double delta = maxVal - minVal;
     
-    // Value (brightness)
-    v = (maxVal + minVal) / ColorConstants::HSV_LIGHTNESS_FACTOR;
+    // Value (brightness) - correct HSV formula
+    v = maxVal;
     
     // Saturation
     if (maxVal == 0) {
@@ -155,8 +143,8 @@ void ColorInverter::rgbToHsv(unsigned char r, unsigned char g, unsigned char b,
 void ColorInverter::hsvToRgb(double h, double s, double v, 
                             unsigned char& r, unsigned char& g, unsigned char& b) {
     double c = v * s;
-    double x = c * (1 - std::abs(std::fmod(h / ColorConstants::HUE_SECTOR_SIZE, ColorConstants::HSV_HUE_MODULO) - 1));
-    double m = v - c / ColorConstants::HSV_SATURATION_DIVISOR;
+    double x = c * (1 - std::abs(std::fmod(h / ColorConstants::HUE_SECTOR_SIZE, 2.0) - 1));
+    double m = v - c;
     
     double rf, gf, bf;
     
@@ -177,4 +165,86 @@ void ColorInverter::hsvToRgb(double h, double s, double v,
     r = static_cast<unsigned char>((rf + m) * ColorConstants::RGB_MAX);
     g = static_cast<unsigned char>((gf + m) * ColorConstants::RGB_MAX);
     b = static_cast<unsigned char>((bf + m) * ColorConstants::RGB_MAX);
+}
+
+RGB ColorInverter::mapToScheme(const RGB& original, const ColorScheme& scheme) {
+    double luminosity = calculateLuminosity(original);
+    double saturation = getSaturation(original.r, original.g, original.b);
+    
+    // Check if it's a colored element (high saturation)
+    if (saturation > ColorConstants::SATURATION_THRESHOLD) {
+        // For colored elements, preserve hue but adapt brightness for dark mode
+        double h, s, v;
+
+        if(rgbToHsvCache.find(original)== rgbToHsvCache.end()) {
+            rgbToHsv(original.r, original.g, original.b, h, s, v);
+            rgbToHsvCache[original] = std::make_tuple(h, s, v);
+        } else {
+            std::tie(h, s, v) = rgbToHsvCache[original];
+        }
+ 
+        // Map HSV value (brightness) to appropriate dark mode range
+        double targetV;
+        if (v > ColorConstants::LIGHT_THRESHOLD) {
+            // Bright colored element -> make moderately bright for dark mode
+            targetV = ColorConstants::BRIGHT_ELEMENT_BASE_VALUE + 
+                     (v - ColorConstants::LIGHT_THRESHOLD) * ColorConstants::BRIGHT_ELEMENT_SCALE_FACTOR;
+        } else if (v < ColorConstants::DARK_THRESHOLD) {
+            // Dark colored element -> make brighter for visibility
+            targetV = ColorConstants::DARK_ELEMENT_BASE_VALUE + 
+                     v * ColorConstants::DARK_ELEMENT_SCALE_FACTOR;
+        } else {
+            // Mid-tone colored element -> adjust moderately
+            targetV = ColorConstants::MID_ELEMENT_BASE_VALUE + 
+                     v * ColorConstants::MID_ELEMENT_SCALE_FACTOR;
+        }
+        
+        // Clamp brightness to readable range for dark mode
+        targetV = std::max(ColorConstants::MIN_COLORED_BRIGHTNESS, 
+                          std::min(ColorConstants::MAX_COLORED_BRIGHTNESS, targetV));
+        
+        // Reduce saturation slightly for better readability in dark mode
+        double targetS = s * ColorConstants::SATURATION_REDUCTION;
+        
+        unsigned char newR, newG, newB;
+        std::tuple<double,double,double>hsvTuple{h, targetS, targetV};
+
+        if(hsvToRgbCache.find(hsvTuple) == hsvToRgbCache.end()) {
+            hsvToRgb(h, targetS, targetV, newR, newG, newB);
+            hsvToRgbCache[hsvTuple] = RGB(newR, newG, newB);
+            
+        }
+
+       return hsvToRgbCache[hsvTuple];
+    } else {
+        // For grayscale elements, use luminosity-based mapping
+        if (luminosity > ColorConstants::LIGHT_THRESHOLD) {
+            // Light background colors -> scheme background
+            return scheme.backgroundColor;
+        } else if (luminosity < ColorConstants::DARK_THRESHOLD) {
+            // Dark text colors -> scheme text color
+            return scheme.textColor;
+        } else {
+            // Mid-tones -> interpolate between background and text
+            double factor = (luminosity - ColorConstants::DARK_THRESHOLD) / 
+                          (ColorConstants::LIGHT_THRESHOLD - ColorConstants::DARK_THRESHOLD);
+            return interpolateColors(scheme.textColor, scheme.backgroundColor, factor);
+        }
+    }
+}
+
+double ColorInverter::calculateLuminosity(const RGB& color) {
+    return (ColorConstants::RGB_LUMINANCE_R * color.r + 
+            ColorConstants::RGB_LUMINANCE_G * color.g + 
+            ColorConstants::RGB_LUMINANCE_B * color.b) / ColorConstants::RGB_SCALE;
+}
+
+RGB ColorInverter::interpolateColors(const RGB& color1, const RGB& color2, double factor) {
+    factor = std::max(0.0, std::min(1.0, factor));
+    
+    unsigned char r = static_cast<unsigned char>(color1.r + factor * (color2.r - color1.r));
+    unsigned char g = static_cast<unsigned char>(color1.g + factor * (color2.g - color1.g));
+    unsigned char b = static_cast<unsigned char>(color1.b + factor * (color2.b - color1.b));
+    
+    return RGB(r, g, b);
 }

@@ -38,3 +38,8 @@ Thumbs.db
 
 # Test files
 *.pdf
+
+# Md file
+DESIGN_COLOR_SCHEMES.md
+COST_ESTIMATION.md
+ARCHITECTURE.md

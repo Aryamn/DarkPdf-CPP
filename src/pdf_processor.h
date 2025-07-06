@@ -5,6 +5,7 @@
 #include <poppler/cpp/poppler-page.h>
 #include <poppler/cpp/poppler-page-renderer.h>
 #include <cairo.h>
+#include "color_scheme.h"
 
 namespace poppler {
     class document;
@@ -18,12 +19,16 @@ public:
     ~PdfProcessor();
     
     bool loadPdf(const std::string& inputPath);
-    bool convertToDarkMode(const std::string& outputPath);
+    bool convertToDarkMode(const std::string& outputPath, const ColorScheme& scheme);
     
 private:
     std::unique_ptr<poppler::document> document_;
     int pageCount_;
-    static const int DEFAULT_DPI = 150;
-    cairo_surface_t* processPage(poppler::page_renderer& renderer ,poppler::page* page, int pageIndex);
+    static const int HIGH_DPI = 150;           // DPI for smaller PDFs
+    static const int LOW_DPI = 110;             // DPI for larger PDFs
+    static const int PAGE_THRESHOLD = 50;     // Threshold for switching to low DPI
+    
+    int calculateOptimalDPI() const;
+    cairo_surface_t* processPage(poppler::page_renderer& renderer ,poppler::page* page, int pageIndex, const ColorScheme& scheme);
     bool saveImageAsPNG(const poppler::image& image, const std::string& filename);    
 };

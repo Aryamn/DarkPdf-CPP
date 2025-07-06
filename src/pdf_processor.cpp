@@ -72,10 +72,14 @@ bool PdfProcessor::loadPdf(const std::string& inputPath) {
     pageCount_ = document_->pages();
     std::cout << "Loaded PDF with " << pageCount_ << " pages" << "\n";
     
+    // Display the DPI that will be used
+    int dpi = calculateOptimalDPI();
+    std::cout << "Using DPI: " << dpi << " (threshold: " << PAGE_THRESHOLD << " pages)" << "\n";
+    
     return true;
 }
 
-bool PdfProcessor::convertToDarkMode(const std::string& outputPath) {
+bool PdfProcessor::convertToDarkMode(const std::string& outputPath, const ColorScheme& scheme) {
     if (!document_) {
         std::cerr << "Error: No PDF loaded" << "\n";
         return false;
@@ -110,16 +114,16 @@ bool PdfProcessor::convertToDarkMode(const std::string& outputPath) {
     renderer.set_render_hint(poppler::page_renderer::text_antialiasing, true);
     renderer.set_render_hint(poppler::page_renderer::text_hinting, true);
 
-    // Process all pages asynchronously
+    // Process all pages asynchronously with the selected scheme
     std::vector<std::future<cairo_surface_t*>> futures;
     
     for (int i = 0; i < pageCount_; ++i) {
-        futures.push_back(std::async(std::launch::async, [this, i, &renderer]() {
+        futures.push_back(std::async(std::launch::async, [this, i, &renderer, &scheme]() {
             std::unique_ptr<poppler::page> page(document_->create_page(i));
             if (!page) {
                 throw std::runtime_error("Could not access page " + std::to_string(i));
             }
-            return processPage(renderer,page.get(), i);
+            return processPage(renderer, page.get(), i, scheme);
         }));
     }
      
@@ -159,21 +163,27 @@ bool PdfProcessor::convertToDarkMode(const std::string& outputPath) {
         }
     }
     
-    // Cleanup
     cairo_destroy(pdfContext);
     cairo_surface_destroy(pdfSurface);
     
-    std::cout << "Conversion completed successfully!" << "\n";
     return true;
 }
 
-cairo_surface_t* PdfProcessor::processPage(poppler::page_renderer& renderer, poppler::page* page, int pageIndex) {
+int PdfProcessor::calculateOptimalDPI() const {
+    if (pageCount_ > PAGE_THRESHOLD) {
+        return LOW_DPI;   // Use 90 DPI for large PDFs
+    } else {
+        return HIGH_DPI;  // Use 130 DPI for smaller PDFs
+    }
+}
+
+cairo_surface_t* PdfProcessor::processPage(poppler::page_renderer& renderer, poppler::page* page, int pageIndex, const ColorScheme& scheme) {
     if (!page) {
         return nullptr;
     }
     
-    // Render page to image
-    poppler::image pageImage = renderer.render_page(page, DEFAULT_DPI, DEFAULT_DPI); // 150 DPI
+    int dpi = calculateOptimalDPI();
+    poppler::image pageImage = renderer.render_page(page, dpi, dpi);
     
     if (!pageImage.is_valid()) {
         std::cerr << "Warning: Could not render page " << pageIndex << "\n";
@@ -200,8 +210,7 @@ cairo_surface_t* PdfProcessor::processPage(poppler::page_renderer& renderer, pop
     
     cairo_surface_mark_dirty(imageSurface);
     
-    // Applied color inversion
-    ColorInverter::invertColors(imageSurface);
+    ColorInverter::invertColors(imageSurface,scheme);
     
     return imageSurface;
 }
